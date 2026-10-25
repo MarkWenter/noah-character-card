@@ -1,0 +1,20 @@
+定义词 压抑:
+    ID: status.suppression
+    类型: Status
+    分类: 负面, 精神
+    数据类型: Integer
+    默认值: 0
+    最小值: 0
+    最大值: 3
+    可叠加: true
+    可驱散: true
+
+定义词 恐惧:
+    ID: status.fear
+    类型: Status
+    数据类型: Integer
+    默认值: 0
+    最小值: 0
+    最大值: 1
+    可叠加: false
+    可驱散: true

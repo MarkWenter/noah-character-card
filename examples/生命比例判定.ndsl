@@ -1,0 +1,14 @@
+定义节点 生命比例判定:
+    ID: node.hp_ratio_check
+    模板: 数值比较
+    类型: Condition
+    输入:
+        执行: Flow
+        目标: Entity
+        阈值: Percent
+    左值: 目标.生命值 / 目标.最大生命值
+    比较: <=
+    右值: 阈值
+    输出:
+        成立: Flow
+        不成立: Flow
