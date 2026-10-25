@@ -1,0 +1,94 @@
+"""Versioned, bounded data files. No pickle, eval, macros or executable imports."""
+import json
+import os
+from pathlib import Path
+import shutil
+import tempfile
+import xml.etree.ElementTree as ET
+from .domain import CardError, validate
+
+MAX_BYTES=2*1024*1024
+
+def _reject_constant(value):
+    raise CardError('不允许非有限数值')
+
+def _pairs(pairs):
+    result={}
+    for key,value in pairs:
+        if key in result: raise CardError('JSON 中存在重复字段')
+        result[key]=value
+    return result
+
+def _xml_node(value, key=None):
+    node=ET.Element('value')
+    if key is not None: node.set('key',key)
+    if isinstance(value,dict):
+        node.set('type','object')
+        for k,v in value.items(): node.append(_xml_node(v,k))
+    elif isinstance(value,list):
+        node.set('type','array')
+        for v in value: node.append(_xml_node(v))
+    elif isinstance(value,bool): node.set('type','boolean'); node.text='true' if value else 'false'
+    elif value is None: node.set('type','null')
+    elif isinstance(value,(int,float)): node.set('type','number'); node.text=json.dumps(value,allow_nan=False)
+    else: node.set('type','string'); node.text=value
+    return node
+
+def _read_xml(node, depth=0):
+    if depth>24 or node.tag!='value' or set(node.attrib)-{'type','key'}: raise CardError('XML 结构不受支持')
+    kind=node.get('type'); text=node.text or ''
+    if kind=='object':
+        values={}
+        for child in node:
+            key=child.get('key')
+            if key is None or key in values: raise CardError('XML 字段缺失或重复')
+            values[key]=_read_xml(child,depth+1)
+        return values
+    if kind=='array': return [_read_xml(c,depth+1) for c in node]
+    if len(node): raise CardError('XML 标量不允许子节点')
+    if kind=='string': return text
+    if kind=='boolean' and text in ('true','false'): return text=='true'
+    if kind=='null' and not text: return None
+    if kind=='number':
+        value=json.loads(text,parse_constant=_reject_constant)
+        if type(value) not in (int,float): raise CardError('XML 数值错误')
+        return value
+    raise CardError('XML 类型不受支持')
+
+def load(path):
+    path=Path(path)
+    try:
+        with path.open('rb') as stream: raw=stream.read(MAX_BYTES+1)
+        if len(raw)>MAX_BYTES: raise CardError('文件超过2MB限制')
+        text=raw.decode('utf-8-sig')
+        if text.lstrip().startswith('<'):
+            if '<!DOCTYPE' in text.upper() or '<!ENTITY' in text.upper(): raise CardError('不允许XML实体或DTD')
+            root=ET.fromstring(text)
+            if root.tag!='noah-card' or root.attrib!={'version':'1'} or len(root)!=1: raise CardError('不是受支持的人物卡XML')
+            card=_read_xml(root[0])
+        else: card=json.loads(text,parse_constant=_reject_constant,object_pairs_hook=_pairs)
+        return validate(card)
+    except CardError: raise
+    except (OSError,UnicodeError,ValueError,ET.ParseError,RecursionError) as exc:
+        raise CardError(f'无法读取人物卡：{exc}') from exc
+
+def save(path,card):
+    validate(card); path=Path(path); temporary=None
+    try:
+        if path.suffix.lower()=='.xml':
+            root=ET.Element('noah-card',version='1'); root.append(_xml_node(card)); ET.indent(root,space='  ')
+            data=ET.tostring(root,encoding='utf-8',xml_declaration=True)
+        else: data=json.dumps(card,ensure_ascii=False,indent=2,allow_nan=False).encode('utf-8')
+        # XML 1.0 rejects some control characters; prove the exported form can reopen.
+        if path.suffix.lower()=='.xml': ET.fromstring(data)
+        if len(data)>MAX_BYTES: raise CardError('人物卡超过2MB限制')
+        with tempfile.NamedTemporaryFile(dir=path.parent,prefix='.'+path.name+'.',suffix='.tmp',delete=False) as stream:
+            temporary=Path(stream.name); stream.write(data); stream.flush(); os.fsync(stream.fileno())
+        if path.exists(): shutil.copy2(path,path.with_name(path.name+'.bak'))
+        os.replace(temporary,path); temporary=None
+    except CardError: raise
+    except (OSError,ValueError,ET.ParseError) as exc: raise CardError(f'保存失败，原文件未被替换：{exc}') from exc
+    finally:
+        if temporary is not None:
+            try: temporary.unlink(missing_ok=True)
+            except OSError: pass

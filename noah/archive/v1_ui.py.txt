@@ -1,0 +1,397 @@
+"""Tkinter editor. UI fields bind to stable data paths, not worksheet positions."""
+import copy
+import logging
+from pathlib import Path
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import uuid
+from .domain import ATTRS, EFFECTS, SLOTS, CONTAINERS, CATALOG, CardError, new_card, validate, calculate, roll_race
+from .storage import load, save
+
+ROOT=Path(__file__).resolve().parent.parent
+
+def get(data,path):
+    for key in path: data=data[key]
+    return data
+
+def put(data,path,value):
+    for key in path[:-1]: data=data[key]
+    data[path[-1]]=value
+
+class ScrollPage(ttk.Frame):
+    def __init__(self,parent):
+        super().__init__(parent)
+        self.canvas=tk.Canvas(self,highlightthickness=0,bg='#f4f6f8')
+        bar=ttk.Scrollbar(self,orient='vertical',command=self.canvas.yview)
+        self.content=ttk.Frame(self.canvas,padding=20)
+        win=self.canvas.create_window((0,0),window=self.content,anchor='nw')
+        self.content.bind('<Configure>',lambda e:self.canvas.configure(scrollregion=self.canvas.bbox('all')))
+        self.canvas.bind('<Configure>',lambda e:self.canvas.itemconfigure(win,width=e.width))
+        self.canvas.configure(yscrollcommand=bar.set)
+        self.canvas.pack(side='left',fill='both',expand=True); bar.pack(side='right',fill='y')
+        self.bind('<Enter>',lambda e:self.canvas.bind_all('<MouseWheel>',self.wheel))
+        self.bind('<Leave>',lambda e:self.canvas.unbind_all('<MouseWheel>'))
+    def wheel(self,event):
+        self.canvas.yview_scroll(-int(event.delta/120),'units')
+
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__(); self.title('NOAH / 诺阿人物卡'); self.geometry('1280x860'); self.minsize(1100,680)
+        self.card=new_card(); self.path=None; self.dirty=False; self.fields={}; self.pending=None; self.loading=False
+        self.recovery=ROOT/'.local'/'recovery.noah'
+        style=ttk.Style(self); style.theme_use('clam')
+        style.configure('.',font=('Microsoft YaHei UI',10),background='#f4f6f8',foreground='#243347')
+        style.configure('TEntry',fieldbackground='white',padding=5)
+        style.configure('TButton',padding=(12,6)); style.configure('TNotebook.Tab',padding=(20,10))
+        style.configure('TLabelframe',padding=12); style.configure('TLabelframe.Label',font=('Microsoft YaHei UI',11,'bold'))
+        style.configure('Title.TLabel',font=('Microsoft YaHei UI',22,'bold'),foreground='#173e55')
+        style.configure('Metric.TLabel',font=('Microsoft YaHei UI',13,'bold'),foreground='#007f85')
+        header=ttk.Frame(self,padding=(20,14)); header.pack(fill='x')
+        ttk.Label(header,text='NOAH  /  人物档案',style='Title.TLabel').pack(side='left')
+        toolbar=ttk.Frame(self,padding=(20,0,20,10)); toolbar.pack(fill='x')
+        for label,cmd in [('新建',self.new),('打开',self.open),('保存',self.save),('另存为',lambda:self.save(True)),('导出 XML',self.export_xml),('恢复草稿',self.restore)]: ttk.Button(toolbar,text=label,command=cmd).pack(side='left',padx=4)
+        self.file_label=ttk.Label(self,padding=(22,0)); self.file_label.pack(fill='x')
+        notebook=ttk.Notebook(self); notebook.pack(fill='both',expand=True,padx=16,pady=12)
+        pages={}
+        for name in ['人物概览','属性与技能','晶灵','背景故事','背包与装备','规则说明']:
+            p=ScrollPage(notebook); notebook.add(p,text=name); pages[name]=p.content
+        self.overview(pages['人物概览']); self.attributes(pages['属性与技能']); self.crystal(pages['晶灵']); self.background(pages['背景故事']); self.inventory(pages['背包与装备']); self.rules(pages['规则说明'])
+        self.status=ttk.Label(self,padding=(20,8),wraplength=1200); self.status.pack(fill='x')
+        self.protocol('WM_DELETE_WINDOW',self.close)
+        self.bind('<Control-s>',lambda e:self.save()); self.bind('<Control-o>',lambda e:self.open()); self.bind('<Control-n>',lambda e:self.new())
+        self.report_callback_exception=self.callback_error
+        self.populate(); self.after(30000,self.autosave)
+
+    def box(self,parent,title):
+        b=ttk.LabelFrame(parent,text=title); b.pack(fill='x',pady=(0,16)); return b
+
+    def field(self,parent,label,path,row,col=0,choices=None,wide=False):
+        ttk.Label(parent,text=label).grid(row=row,column=col*2,sticky='nw',padx=(4,10),pady=5)
+        value=get(self.card,path)
+        var=tk.BooleanVar() if type(value) is bool else tk.StringVar()
+        if type(value) is bool: widget=ttk.Checkbutton(parent,variable=var,command=self.changed)
+        elif wide:
+            widget=tk.Text(parent,height=4,wrap='word',font=('Microsoft YaHei UI',10),relief='solid',bd=1,undo=True)
+            widget.bind('<<Modified>>',lambda e,w=widget:self.text_changed(w))
+        elif choices:
+            widget=ttk.Combobox(parent,textvariable=var,values=choices,state='readonly',width=26)
+        else: widget=ttk.Entry(parent,textvariable=var,width=28)
+        widget.grid(row=row,column=col*2+1,sticky='ew',padx=4,pady=5); parent.columnconfigure(col*2+1,weight=1)
+        self.fields[tuple(path)]=(var,widget,type(value))
+        if not wide: var.trace_add('write',lambda *args:self.changed())
+        return widget
+
+    def text_changed(self,widget):
+        if widget.edit_modified():
+            widget.edit_modified(False); self.changed()
+
+    def overview(self,p):
+        b=self.box(p,'人物基本信息')
+        self.field(b,'亚种',('race',),0,choices=list(CATALOG['races']))
+        self.race_label=ttk.Label(b,wraplength=600); self.race_label.grid(row=0,column=2,columnspan=2,sticky='w')
+        for i,k in enumerate(self.card['basic']): self.field(b,k,('basic',k),i//2+1,i%2,choices=list(CATALOG['careers']) if k=='战斗职业' else None)
+        self.race_details=ttk.Label(b,wraplength=1020,justify='left'); self.race_details.grid(row=12,column=0,columnspan=4,sticky='w',padx=4,pady=12)
+        b=self.box(p,'身体数据 · 上限与恢复自动计算')
+        self.body_labels={}
+        for r,k in enumerate(['HP','MP','TP']):
+            self.field(b,k+' 当前',('body',k),r)
+            self.body_labels[k]=ttk.Label(b,style='Metric.TLabel'); self.body_labels[k].grid(row=r,column=2,sticky='w',padx=18)
+        self.field(b,'移动',('body','移动'),3); self.field(b,'护盾',('body','护盾'),3,1); self.field(b,'幸运',('body','幸运'),4)
+        self.field(b,'常驻效果',('body','常驻效果'),5,wide=True)
+        b=self.box(p,'属性总览 · 计算结果')
+        self.summary=ttk.Label(b,style='Metric.TLabel',wraplength=1050); self.summary.pack(anchor='w')
+
+    def attributes(self,p):
+        b=self.box(p,'属性来源 · 基础与补正可编辑，其余自动计算')
+        self.attr_tree=ttk.Treeview(b,columns=['属性','基础','种族','技能','上限','封顶小计','灵能形态','装备','补正','最终'],show='headings',height=7)
+        for k in self.attr_tree['columns']: self.attr_tree.heading(k,text=k); self.attr_tree.column(k,width=86,anchor='center',stretch=True)
+        self.attr_tree.pack(fill='x')
+        controls=ttk.Frame(b); controls.pack(fill='x',pady=8)
+        ttk.Button(controls,text='投掷 / 重投种族骰',command=self.roll).pack(side='left')
+        self.dice_label=ttk.Label(controls,wraplength=850); self.dice_label.pack(side='left',padx=16)
+        grid=ttk.Frame(b); grid.pack(fill='x')
+        for r,k in enumerate(ATTRS): self.field(grid,k+' 基础',('attributes',k,'base'),r); self.field(grid,k+' 补正',('attributes',k,'correction'),r,1)
+        b=self.box(p,'数值修正 · 附表计算基础恢复，再叠加以下修正')
+        for r,k in enumerate(['HP','MP','TP']):
+            for j,x in enumerate(['额外数值','天赋恢复','技能恢复','状态恢复']): self.field(b,k+' '+x,('modifiers',k,x),r*2+j//2,j%2)
+        b=self.box(p,'技能 · 双击编辑数值、说明与属性效果')
+        self.skill_tree=ttk.Treeview(b,columns=['名称','基础','成长','总值','效果'],show='headings',height=11)
+        for k in self.skill_tree['columns']: self.skill_tree.heading(k,text=k); self.skill_tree.column(k,width=120 if k!='效果' else 420)
+        self.skill_tree.pack(fill='x'); self.skill_tree.bind('<Double-1>',lambda e:self.edit_skill())
+        ttk.Button(b,text='编辑所选技能',command=self.edit_skill).pack(anchor='w',pady=8)
+        ttk.Label(b,text='技能效果是独立的结构化修正，不由技能点数臆测。职业点上限与 SP 等待新规则。').pack(anchor='w')
+
+    def crystal(self,p):
+        b=self.box(p,'晶灵基本信息')
+        for r,k in enumerate(['名称','属性一','属性二','意象','形象']): self.field(b,k,('crystal',k),r)
+        b=self.box(p,'常态灵能指标')
+        for r,(k,limit) in enumerate([('活跃度','-99～99'),('烈性','-99～99'),('适配度','-100～100'),('能量等级','0～100')]): self.field(b,k+'  '+limit,('crystal',k),r)
+        self.level_label=ttk.Label(b,style='Metric.TLabel'); self.level_label.grid(row=4,column=1,sticky='w',pady=10)
+        for k in ['固有天赋','天赋衍生','开发描述']:
+            b=self.box(p,k); self.field(b,k,('crystal',k),0,wide=True)
+        b=self.box(p,'晶灵展开')
+        self.field(b,'启用展开',('form','enabled'),0); self.field(b,'描述',('form','描述'),1,wide=True); self.field(b,'天赋增幅',('form','天赋增幅'),2,wide=True)
+        for i,k in enumerate(self.card['form']['增幅']): self.field(b,k+' 增幅',('form','增幅',k),3+i//2,i%2)
+        b=self.box(p,'灵能过载 · 非必填')
+        self.field(b,'启用过载',('overload','enabled'),0)
+        for i,k in enumerate(self.card['overload']['增幅']): self.field(b,k+' 增幅',('overload','增幅',k),1+i//2,i%2)
+        for i,k in enumerate(['HP','MP','TP']): self.field(b,k+' 消耗/t',('overload','消耗',k),4+i)
+        self.field(b,'特殊天赋',('overload','特殊天赋'),7,wide=True); self.field(b,'描述',('overload','描述'),8,wide=True)
+
+    def background(self,p):
+        for k in self.card['background']:
+            b=self.box(p,k); self.field(b,k,('background',k),0,wide=True)
+            if k=='背景故事':
+                inner=ttk.LabelFrame(b,text='学术经历 · 属于背景故事'); inner.grid(row=1,column=0,columnspan=2,sticky='ew',pady=12)
+                for r,a in enumerate(self.card['academic']): self.field(inner,a,('academic',a),r,wide=a in ['院校简介','获得奖项','学术论文','个人专利'])
+
+    def inventory(self,p):
+        b=self.box(p,'背包 · 点击空格添加，点击物品编辑；坐标从0起')
+        bar=ttk.Frame(b); bar.pack(fill='x'); ttk.Label(bar,text='背包容量').pack(side='left')
+        self.bag_size=tk.StringVar(value='6 × 6')
+        size=ttk.Combobox(bar,textvariable=self.bag_size,values=['6 × 6','7 × 9','9 × 12'],state='readonly',width=15); size.pack(side='left',padx=12); size.bind('<<ComboboxSelected>>',self.resize_bag)
+        ttk.Button(bar,text='添加物品 / 装备',command=lambda:self.edit_item()).pack(side='left')
+        self.weight_label=ttk.Label(bar); self.weight_label.pack(side='left',padx=20)
+        grids=ttk.Frame(b); grids.pack(fill='x',pady=10); self.grids={}
+        for name in CONTAINERS:
+            outer=ttk.LabelFrame(grids,text=name); outer.pack(side='left',anchor='n',padx=8)
+            canvas=tk.Canvas(outer,bg='#e7edf1',highlightthickness=0); canvas.pack(); self.grids[name]=canvas
+            canvas.bind('<Button-1>',lambda e,n=name:self.grid_click(n,e))
+        b=self.box(p,'装备槽 · 四个赋能笔部件需先装备赋能笔')
+        self.equipment_labels={}
+        for i,k in enumerate(SLOTS):
+            label=ttk.Label(b,text=k,width=34,relief='solid',padding=10,cursor='hand2'); label.grid(row=i//3,column=i%3,sticky='ew',padx=4,pady=4); b.columnconfigure(i%3,weight=1)
+            label.bind('<Button-1>',lambda e,slot=k:self.equip_click(slot)); self.equipment_labels[k]=label
+        b=self.box(p,'物品列表 · 双击编辑；装备效果仅在装备槽中生效')
+        self.item_tree=ttk.Treeview(b,columns=['名称','容器','占格','数量','重量','说明'],show='headings',height=8)
+        for k in self.item_tree['columns']: self.item_tree.heading(k,text=k); self.item_tree.column(k,width=130 if k!='说明' else 300)
+        self.item_tree.pack(fill='x'); self.item_tree.bind('<Double-1>',lambda e:self.edit_selected_item())
+        bar=ttk.Frame(b); bar.pack(fill='x',pady=8)
+        ttk.Button(bar,text='编辑 / 移动 / 旋转',command=self.edit_selected_item).pack(side='left'); ttk.Button(bar,text='删除所选',command=self.delete_item).pack(side='left',padx=8)
+
+    def rules(self,p):
+        text=(ROOT/'RULES.md').read_text(encoding='utf-8')
+        widget=tk.Text(p,wrap='word',font=('Microsoft YaHei UI',11),height=45,relief='flat',bg='#f4f6f8',padx=12,pady=12)
+        widget.insert('1.0',text); widget.configure(state='disabled'); widget.pack(fill='both',expand=True)
+
+    def changed(self):
+        if self.loading: return
+        self.dirty=True; self.title('● NOAH / 诺阿人物卡')
+        if self.pending: self.after_cancel(self.pending)
+        self.pending=self.after(180,self.refresh)
+
+    def collect(self):
+        candidate=copy.deepcopy(self.card)
+        for path,(var,widget,kind) in self.fields.items():
+            if isinstance(widget,tk.Text): value=widget.get('1.0','end-1c')
+            elif kind is bool: value=var.get()
+            elif kind in (int,float):
+                try: value=float(var.get())
+                except ValueError: raise CardError(f'{" / ".join(path)} 需要有效数字')
+            else: value=var.get()
+            put(candidate,path,value)
+        if candidate['race']!=self.card['race']: candidate['dice']={k:[] for k in ATTRS}
+        validate(candidate); return candidate
+
+    def refresh(self):
+        self.pending=None
+        try:
+            self.card=self.collect(); self.render()
+        except CardError as exc: self.status.configure(text='输入尚未有效，计算结果保留上次值：'+str(exc),foreground='#a33e27')
+
+    def populate(self):
+        self.loading=True
+        for path,(var,widget,kind) in self.fields.items():
+            value=get(self.card,path)
+            if isinstance(widget,tk.Text): widget.delete('1.0','end'); widget.insert('1.0',value); widget.edit_modified(False)
+            else: var.set(value if kind is bool else (f'{value:g}' if kind in (int,float) else value))
+        self.loading=False; self.render()
+
+    def render(self):
+        values=calculate(self.card); race=CATALOG['races'][self.card['race']]
+        self.file_label.configure(text=str(self.path) if self.path else '未保存的人物卡  ·  Ctrl+S 保存  /  Ctrl+O 打开')
+        self.race_label.configure(text=f"种族：{race['group']}  ·  起源：{race['origin']}")
+        self.race_details.configure(text=race['description']+'\n种族奖励骰：'+race['dice']+'\n战斗职业：'+CATALOG['careers'].get(self.card['basic']['战斗职业'],'未选择'))
+        for k,l in self.body_labels.items(): l.configure(text=f"上限 {values['maxima'][k]:.2f}    恢复 {values['regen'][k]:+.2f} / t")
+        self.summary.configure(text='     '.join(f"{k}  {v['最终']:g}" for k,v in values['attributes'].items())+f"     幸运  {self.card['body']['幸运']:g}")
+        self.attr_tree.delete(*self.attr_tree.get_children())
+        for k,v in values['attributes'].items(): self.attr_tree.insert('', 'end',values=[k]+[f'{v[c]:g}' for c in self.attr_tree['columns'][1:]])
+        self.dice_label.configure(text=f"规则：{race['dice']}  |  记录："+'；'.join(k+':'+','.join(map(str,v)) for k,v in self.card['dice'].items() if v))
+        self.level_label.configure(text=f"综合灵能等级  {values['level']:.2f} / 100   ·   {values['grade']} 级（暂定公式）")
+        self.skill_tree.delete(*self.skill_tree.get_children())
+        for k,v in self.card['skills'].items(): self.skill_tree.insert('', 'end',iid=k,values=[k,v['基础'],v['成长'],v['基础']+v['成长'],' / '.join(f'{a}{n:+g}' for a,n in v['效果'].items() if n)])
+        self.draw_inventory(); self.weight_label.configure(text=f"总重量 {values['weight']:g} kg")
+        self.status.configure(text='；'.join(values['warnings']) or '所有输入有效 · 已自动更新计算结果',foreground='#a33e27' if values['warnings'] else '#007477')
+
+    def draw_inventory(self):
+        self.bag_size.set(' × '.join(map(str,self.card['inventory']['size'])))
+        for name,canvas in self.grids.items():
+            w,h=self.card['inventory']['size'] if name=='背包' else CONTAINERS[name]; unit=34
+            canvas.configure(width=w*unit,height=h*unit); canvas.delete('all')
+            for x in range(w+1): canvas.create_line(x*unit,0,x*unit,h*unit,fill='#c3cfd8')
+            for y in range(h+1): canvas.create_line(0,y*unit,w*unit,y*unit,fill='#c3cfd8')
+            for item in self.card['inventory']['items']:
+                if item['container']!=name: continue
+                x,y=item['x']*unit,item['y']*unit; ww,hh=item['w']*unit,item['h']*unit
+                canvas.create_rectangle(x+2,y+2,x+ww-2,y+hh-2,fill='#3c737e',outline='#24535d')
+                canvas.create_text(x+ww/2,y+hh/2,text=item['name'],width=max(20,ww-4),fill='white',font=('Microsoft YaHei UI',9))
+        equipped={i['slot']:i for i in self.card['inventory']['items'] if i['container']=='装备'}
+        for slot,label in self.equipment_labels.items():
+            locked=slot in SLOTS[1:5] and '赋能笔' not in equipped
+            label.configure(text=slot+'  /  '+('需先装备赋能笔' if locked else equipped.get(slot,{}).get('name','空')),foreground='#9299a0' if locked else '#243347')
+        self.item_tree.delete(*self.item_tree.get_children())
+        for i in self.card['inventory']['items']: self.item_tree.insert('', 'end',iid=i['id'],values=[i['name'],i['container']+(' / '+i['slot'] if i['slot'] else ''),f"{i['w']}×{i['h']} @ {i['x']},{i['y']}",i['quantity'],i['weight'],i['description']])
+
+    def roll(self):
+        try: candidate=self.collect()
+        except CardError as exc: return messagebox.showerror('输入错误',str(exc))
+        if any(candidate['dice'].values()) and not messagebox.askyesno('重投奖励骰','重投将替换已保存的骰点，是否继续？'): return
+        roll_race(candidate); self.card=candidate; self.changed(); self.render()
+
+    def resize_bag(self,event=None):
+        try:
+            candidate=self.collect(); candidate['inventory']['size']=[int(v.strip()) for v in self.bag_size.get().split('×')]; validate(candidate)
+            self.card=candidate; self.changed(); self.render()
+        except CardError as exc: self.bag_size.set(' × '.join(map(str,self.card['inventory']['size']))); messagebox.showerror('无法改变容量',str(exc))
+
+    def grid_click(self,name,event):
+        x,y=event.x//34,event.y//34
+        for i in self.card['inventory']['items']:
+            if i['container']==name and i['x']<=x<i['x']+i['w'] and i['y']<=y<i['y']+i['h']: return self.edit_item(i['id'])
+        self.edit_item(container=name,x=x,y=y)
+
+    def equip_click(self,slot):
+        items=self.card['inventory']['items']; has_pen=any(i['container']=='装备' and i['slot']=='赋能笔' for i in items)
+        if slot in SLOTS[1:5] and not has_pen: return messagebox.showinfo('部件尚未解锁','请先在赋能笔槽装备赋能笔。')
+        for i in items:
+            if i['container']=='装备' and i['slot']==slot: return self.edit_item(i['id'])
+        self.edit_item(container='装备',slot=slot)
+
+    def edit_selected_item(self):
+        selection=self.item_tree.selection()
+        if selection: self.edit_item(selection[0])
+
+    def delete_item(self):
+        selection=self.item_tree.selection()
+        if not selection: return
+        if not messagebox.askyesno('删除物品','删除所选物品？删除赋能笔前，请先将其部件移回背包。'): return
+        try:
+            candidate=self.collect(); candidate['inventory']['items']=[i for i in candidate['inventory']['items'] if i['id']!=selection[0]]; validate(candidate)
+            self.card=candidate; self.changed(); self.render()
+        except CardError as exc: messagebox.showerror('无法删除',str(exc))
+
+    def dialog(self,title):
+        win=tk.Toplevel(self); win.title(title); win.geometry('720x750'); win.transient(self); win.grab_set()
+        page=ScrollPage(win); page.pack(fill='both',expand=True); return win,page.content
+
+    def edit_item(self,item_id=None,container='背包',x=0,y=0,slot=''):
+        try: candidate=self.collect()
+        except CardError as exc: return messagebox.showerror('输入错误',str(exc))
+        old=next((i for i in candidate['inventory']['items'] if i['id']==item_id),None)
+        item=copy.deepcopy(old) if old else {'id':uuid.uuid4().hex,'name':'','container':container,'x':x,'y':y,'w':1,'h':1,'quantity':1,'weight':0.0,'slot':slot,'effects':{k:0.0 for k in EFFECTS},'description':''}
+        win,body=self.dialog('物品 · 尺寸 / 位置 / 装备效果'); variables={}
+        options={'container':list(CONTAINERS)+['装备'],'slot':['']+SLOTS}
+        labels={'name':'名称','container':'所在容器','slot':'装备槽','x':'横坐标 x','y':'纵坐标 y','w':'宽度','h':'高度','quantity':'数量','weight':'单件重量 kg','description':'功能说明'}
+        for r,(k,label) in enumerate(labels.items()):
+            ttk.Label(body,text=label).grid(row=r,column=0,sticky='w',pady=4)
+            var=tk.StringVar(value=str(item[k])); variables[k]=var
+            if k in options: widget=ttk.Combobox(body,textvariable=var,values=options[k],state='readonly')
+            else: widget=ttk.Entry(body,textvariable=var,width=50)
+            widget.grid(row=r,column=1,sticky='ew',pady=4)
+        body.columnconfigure(1,weight=1)
+        def rotate():
+            width,height=variables['w'].get(),variables['h'].get(); variables['w'].set(height); variables['h'].set(width)
+        ttk.Button(body,text='旋转占格（交换宽高）',command=rotate).grid(row=10,column=1,sticky='w',pady=5)
+        ttk.Label(body,text='效果仅在装备时生效；每件装备只计算一次。').grid(row=11,column=0,columnspan=2,sticky='w')
+        for r,k in enumerate(EFFECTS,12):
+            ttk.Label(body,text=k).grid(row=r,column=0,sticky='w',pady=3); var=tk.StringVar(value=f"{item['effects'][k]:g}"); variables['effect:'+k]=var; ttk.Entry(body,textvariable=var).grid(row=r,column=1,sticky='ew',pady=3)
+        def apply():
+            try:
+                edited=copy.deepcopy(item)
+                for k in labels:
+                    text=variables[k].get(); edited[k]=int(text) if k in ['x','y','w','h','quantity'] else float(text) if k=='weight' else text
+                if edited['container']!='装备': edited['slot']=''
+                edited['effects']={k:float(variables['effect:'+k].get()) for k in EFFECTS}
+                candidate['inventory']['items']=[i for i in candidate['inventory']['items'] if i['id']!=edited['id']]+[edited]
+                validate(candidate); self.card=candidate; self.changed(); self.render(); win.destroy()
+            except (ValueError,CardError) as exc: messagebox.showerror('物品无效',str(exc),parent=win)
+        footer=ttk.Frame(win,padding=10); footer.pack(fill='x'); ttk.Button(footer,text='保存物品',command=apply).pack(side='right'); ttk.Button(footer,text='取消',command=win.destroy).pack(side='right',padx=8)
+
+    def edit_skill(self):
+        selection=self.skill_tree.selection()
+        if not selection: return
+        try: candidate=self.collect()
+        except CardError as exc: return messagebox.showerror('输入错误',str(exc))
+        key=selection[0]; skill=candidate['skills'][key]; win,body=self.dialog(key+' · 技能效果'); variables={}
+        for r,k in enumerate(['基础','成长','描述']+ATTRS):
+            ttk.Label(body,text=k).grid(row=r,column=0,sticky='w',pady=8)
+            var=tk.StringVar(value=skill[k] if k in skill else skill['效果'][k]); variables[k]=var
+            ttk.Entry(body,textvariable=var,width=50).grid(row=r,column=1,sticky='ew',pady=8)
+        def apply():
+            try:
+                skill['基础']=float(variables['基础'].get()); skill['成长']=float(variables['成长'].get()); skill['描述']=variables['描述'].get()
+                skill['效果']={k:float(variables[k].get()) for k in ATTRS}; validate(candidate)
+                self.card=candidate; self.changed(); self.render(); win.destroy()
+            except (ValueError,CardError) as exc: messagebox.showerror('技能无效',str(exc),parent=win)
+        ttk.Button(body,text='保存技能',command=apply).grid(row=12,column=1,pady=15)
+
+    def confirm_discard(self):
+        if not self.dirty: return True
+        answer=messagebox.askyesnocancel('有未保存修改','是否先保存当前人物卡？\n选“否”将放弃当前未保存修改。')
+        if answer is None: return False
+        return self.save() if answer else True
+
+    def new(self):
+        if not self.confirm_discard(): return
+        self.card=new_card(); self.path=None; self.dirty=False; self.populate(); self.title('NOAH / 诺阿人物卡')
+
+    def open(self):
+        if not self.confirm_discard(): return
+        path=filedialog.askopenfilename(filetypes=[('诺阿人物卡','*.noah *.json *.xml *.bak'),('所有文件','*.*')])
+        if not path: return
+        try: candidate=load(path)
+        except CardError as exc: return messagebox.showerror('打开失败',str(exc))
+        self.card=candidate; self.path=Path(path); self.dirty=False; self.populate(); self.title('NOAH / 诺阿人物卡')
+
+    def save(self,as_new=False):
+        try: candidate=self.collect()
+        except CardError as exc: messagebox.showerror('无法保存',str(exc)); return False
+        path=self.path
+        if as_new or path is None:
+            selected=filedialog.asksaveasfilename(defaultextension='.noah',initialfile=(candidate['basic']['姓名'] or '未命名人物')+'.noah',filetypes=[('诺阿人物卡','*.noah'),('JSON','*.json'),('XML','*.xml')])
+            if not selected: return False
+            path=Path(selected)
+        try: save(path,candidate)
+        except CardError as exc: messagebox.showerror('保存失败',str(exc)); return False
+        self.card=candidate; self.path=path; self.dirty=False; self.title('NOAH / 诺阿人物卡'); self.render(); self.status.configure(text='已保存：'+str(path),foreground='#007477'); return True
+
+    def export_xml(self):
+        try: candidate=self.collect()
+        except CardError as exc: return messagebox.showerror('无法导出',str(exc))
+        path=filedialog.asksaveasfilename(defaultextension='.xml',filetypes=[('XML','*.xml')],initialfile='人物卡.xml')
+        if path:
+            try: save(path,candidate); self.status.configure(text='XML 已导出，可通过“打开”继续编辑：'+path)
+            except CardError as exc: messagebox.showerror('导出失败',str(exc))
+
+    def autosave(self):
+        if self.dirty:
+            try:
+                candidate=self.collect(); self.recovery.parent.mkdir(exist_ok=True); save(self.recovery,candidate)
+            except (CardError,OSError) as exc: self.status.configure(text='草稿未能保存：'+str(exc),foreground='#a33e27')
+        self.after(30000,self.autosave)
+
+    def restore(self):
+        if not self.recovery.exists(): return messagebox.showinfo('恢复草稿','暂无自动保存草稿。编辑期间每30秒保存一次有效数据。')
+        if not self.confirm_discard(): return
+        try: self.card=load(self.recovery)
+        except CardError as exc: return messagebox.showerror('草稿无法恢复',str(exc))
+        self.path=None; self.dirty=True; self.populate(); self.title('● NOAH / 恢复的草稿')
+
+    def close(self):
+        if self.confirm_discard(): self.destroy()
+
+    def callback_error(self,exc_type,exc,tb):
+        logging.error('Unexpected UI error',exc_info=(exc_type,exc,tb))
+        messagebox.showerror('操作未完成','发生意外错误。当前窗口仍可使用；请尝试另存为。错误类型：'+exc_type.__name__+'\n详情见 .local/app.log（不包含人物卡内容）。')
+
+

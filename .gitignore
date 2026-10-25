@@ -1,0 +1,11 @@
+.local/
+.deps/
+__pycache__/
+*.pyc
+*.bak
+*.tmp
+.venv/
+.env
+.env.*
+/preview.png
+/*_preview.png
