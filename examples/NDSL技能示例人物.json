@@ -1,0 +1,515 @@
+{
+  "format": "noah-card",
+  "version": 2,
+  "rules_version": "0.2-provisional",
+  "basic": {
+    "姓名": "NDSL功能示例",
+    "玩家": "示例（无真实人物）",
+    "身高cm": "",
+    "体重kg": "",
+    "性别": "",
+    "年龄": "",
+    "故乡": "",
+    "民族": "",
+    "住址": "",
+    "职业": "",
+    "阵营": "",
+    "所属组织": "",
+    "立场": "",
+    "战斗职业": ""
+  },
+  "portrait": {
+    "mime": "image/png",
+    "data": ""
+  },
+  "race": "智人",
+  "dice": {
+    "力量": [],
+    "敏捷": [],
+    "耐受": [],
+    "魅力": [],
+    "智力": [],
+    "感知": [],
+    "意志": []
+  },
+  "attributes": {
+    "力量": {
+      "base": 50.0,
+      "correction": 0.0
+    },
+    "敏捷": {
+      "base": 50.0,
+      "correction": 0.0
+    },
+    "耐受": {
+      "base": 50.0,
+      "correction": 0.0
+    },
+    "魅力": {
+      "base": 50.0,
+      "correction": 0.0
+    },
+    "智力": {
+      "base": 50.0,
+      "correction": 0.0
+    },
+    "感知": {
+      "base": 50.0,
+      "correction": 0.0
+    },
+    "意志": {
+      "base": 50.0,
+      "correction": 0.0
+    }
+  },
+  "crystal": {
+    "名称": "回声",
+    "属性一": "火",
+    "属性二": "火",
+    "意象": "",
+    "形象": "",
+    "固有天赋": "",
+    "天赋衍生": "示例技能：施压。通过公共规则图实现压抑三层转恐惧，恐惧解锁共鸣技能。",
+    "活跃度": 0.0,
+    "活跃度符号": "+",
+    "烈性": 0.0,
+    "烈性符号": "+",
+    "适配度": 0.0,
+    "适配度符号": "+",
+    "能量等级": 30
+  },
+  "form": {
+    "enabled": false,
+    "描述": "",
+    "天赋增幅": "",
+    "增幅": {
+      "力量": 0.0,
+      "敏捷": 0.0,
+      "耐受": 0.0,
+      "魅力": 0.0,
+      "智力": 0.0,
+      "感知": 0.0,
+      "意志": 0.0,
+      "烈性": 0.0,
+      "活跃度": 0.0
+    }
+  },
+  "overload": {
+    "enabled": false,
+    "特殊天赋": "",
+    "描述": "",
+    "增幅": {
+      "力量": 0.0,
+      "敏捷": 0.0,
+      "耐受": 0.0,
+      "意志": 0.0,
+      "活跃度": 0.0,
+      "烈性": 0.0
+    },
+    "消耗": {
+      "HP": 0.0,
+      "MP": 0.0,
+      "TP": 0.0
+    }
+  },
+  "body": {
+    "HP": 200,
+    "MP": 40,
+    "TP": 100.0,
+    "移动": 1.0,
+    "护盾": 0.0,
+    "常驻效果": "",
+    "幸运": 60.0
+  },
+  "modifiers": {
+    "HP": {
+      "额外数值": 0.0,
+      "天赋恢复": 0.0,
+      "技能恢复": 0.0,
+      "状态恢复": 0.0
+    },
+    "MP": {
+      "额外数值": 0.0,
+      "天赋恢复": 0.0,
+      "技能恢复": 0.0,
+      "状态恢复": 0.0
+    },
+    "TP": {
+      "额外数值": 0.0,
+      "天赋恢复": 0.0,
+      "技能恢复": 0.0,
+      "状态恢复": 0.0
+    }
+  },
+  "background": {
+    "性格": "",
+    "爱好": "",
+    "理念": "",
+    "外貌": "",
+    "头衔": "",
+    "出身": "",
+    "背景故事": "",
+    "人物标签": "",
+    "人物关系": "",
+    "角色台词": ""
+  },
+  "academic": {
+    "学历": "",
+    "毕业院校": "",
+    "院校地址": "",
+    "领域偏向": "",
+    "综合成绩": "",
+    "毕业时间": "",
+    "院校简介": "",
+    "所学专业": "",
+    "取得学位": "",
+    "获得奖项": "",
+    "学术论文": "",
+    "个人专利": "",
+    "学术地位": ""
+  },
+  "inventory": {
+    "size": [
+      6,
+      6
+    ],
+    "items": []
+  },
+  "extensions": {},
+  "talent_derivations": {
+    "version": 1,
+    "definitions": [
+      {
+        "id": "status.suppression",
+        "kind": "Status",
+        "categories": [
+          "负面",
+          "精神"
+        ],
+        "value_type": "integer",
+        "default": 0,
+        "min": 0,
+        "max": 3,
+        "stackable": true,
+        "dispellable": true,
+        "name": "压抑"
+      },
+      {
+        "id": "status.fear",
+        "kind": "Status",
+        "value_type": "integer",
+        "default": 0,
+        "min": 0,
+        "max": 1,
+        "stackable": false,
+        "dispellable": true,
+        "name": "恐惧"
+      }
+    ],
+    "node_templates": [],
+    "shared_rules": [
+      {
+        "id": "graph.pressure",
+        "name": "施加压抑",
+        "kind": "skill",
+        "enabled": true,
+        "inputs": {},
+        "outputs": {},
+        "nodes": [
+          {
+            "id": "use",
+            "template": "event.skill_used",
+            "params": {
+              "skill": "skill.pressure"
+            },
+            "position": [
+              40,
+              80
+            ]
+          },
+          {
+            "id": "apply",
+            "template": "effect.apply_status",
+            "params": {
+              "definition": "status.suppression",
+              "value": 1
+            },
+            "position": [
+              360,
+              80
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "from": [
+              "use",
+              "out"
+            ],
+            "to": [
+              "apply",
+              "in"
+            ],
+            "kind": "flow"
+          }
+        ]
+      },
+      {
+        "id": "graph.conversion",
+        "name": "压抑转为恐惧",
+        "kind": "shared",
+        "enabled": true,
+        "inputs": {},
+        "outputs": {},
+        "nodes": [
+          {
+            "id": "changed",
+            "template": "event.status_changed",
+            "params": {
+              "definition": "status.suppression"
+            },
+            "position": [
+              30,
+              80
+            ]
+          },
+          {
+            "id": "stacks",
+            "template": "data.status",
+            "params": {
+              "definition": "status.suppression"
+            },
+            "position": [
+              30,
+              350
+            ]
+          },
+          {
+            "id": "compare",
+            "template": "condition.compare",
+            "params": {
+              "b": 3,
+              "op": ">="
+            },
+            "position": [
+              360,
+              80
+            ]
+          },
+          {
+            "id": "remove",
+            "template": "effect.remove_status",
+            "params": {
+              "definition": "status.suppression"
+            },
+            "position": [
+              680,
+              50
+            ]
+          },
+          {
+            "id": "fear",
+            "template": "effect.apply_status",
+            "params": {
+              "definition": "status.fear",
+              "value": 1
+            },
+            "position": [
+              1000,
+              50
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "from": [
+              "changed",
+              "out"
+            ],
+            "to": [
+              "compare",
+              "in"
+            ],
+            "kind": "flow"
+          },
+          {
+            "from": [
+              "stacks",
+              "value"
+            ],
+            "to": [
+              "compare",
+              "a"
+            ],
+            "kind": "data"
+          },
+          {
+            "from": [
+              "compare",
+              "true"
+            ],
+            "to": [
+              "remove",
+              "in"
+            ],
+            "kind": "flow"
+          },
+          {
+            "from": [
+              "remove",
+              "out"
+            ],
+            "to": [
+              "fear",
+              "in"
+            ],
+            "kind": "flow"
+          }
+        ]
+      },
+      {
+        "id": "graph.unlock",
+        "name": "根据恐惧解锁技能",
+        "kind": "shared",
+        "enabled": true,
+        "inputs": {},
+        "outputs": {},
+        "nodes": [
+          {
+            "id": "event",
+            "template": "event.status_changed",
+            "params": {
+              "definition": "status.fear"
+            },
+            "position": [
+              30,
+              70
+            ]
+          },
+          {
+            "id": "read",
+            "template": "data.status",
+            "params": {
+              "definition": "status.fear"
+            },
+            "position": [
+              30,
+              330
+            ]
+          },
+          {
+            "id": "check",
+            "template": "condition.compare",
+            "params": {
+              "b": 0,
+              "op": ">"
+            },
+            "position": [
+              350,
+              70
+            ]
+          },
+          {
+            "id": "yes",
+            "template": "effect.skill",
+            "params": {
+              "skill": "skill.fear_power",
+              "enabled": true
+            },
+            "position": [
+              680,
+              50
+            ]
+          },
+          {
+            "id": "no",
+            "template": "effect.skill",
+            "params": {
+              "skill": "skill.fear_power",
+              "enabled": false
+            },
+            "position": [
+              680,
+              330
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "from": [
+              "event",
+              "out"
+            ],
+            "to": [
+              "check",
+              "in"
+            ],
+            "kind": "flow"
+          },
+          {
+            "from": [
+              "read",
+              "value"
+            ],
+            "to": [
+              "check",
+              "a"
+            ],
+            "kind": "data"
+          },
+          {
+            "from": [
+              "check",
+              "true"
+            ],
+            "to": [
+              "yes",
+              "in"
+            ],
+            "kind": "flow"
+          },
+          {
+            "from": [
+              "check",
+              "false"
+            ],
+            "to": [
+              "no",
+              "in"
+            ],
+            "kind": "flow"
+          }
+        ]
+      }
+    ],
+    "skills": [
+      {
+        "id": "skill.pressure",
+        "name": "施压",
+        "type": "active",
+        "description": "向指定目标施加1层压抑。达到3层时由公共规则图转为恐惧。",
+        "cost": "",
+        "cooldown": "",
+        "graph_id": "graph.pressure",
+        "enabled": true,
+        "references": [
+          "status.suppression"
+        ]
+      },
+      {
+        "id": "skill.fear_power",
+        "name": "恐惧共鸣",
+        "type": "passive",
+        "description": "用于演示状态变化解锁与锁定。",
+        "cost": "",
+        "cooldown": "",
+        "graph_id": "",
+        "enabled": true,
+        "references": [
+          "status.fear"
+        ],
+        "initially_available": false
+      }
+    ]
+  }
+}

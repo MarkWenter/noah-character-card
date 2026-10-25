@@ -31,7 +31,8 @@ def new_card():
         'modifiers': {k: {x: 0.0 for x in ['额外数值', '天赋恢复', '技能恢复', '状态恢复']} for k in ['HP', 'MP', 'TP']},
         'background': {k: '' for k in ['性格', '爱好', '理念', '外貌', '头衔', '出身', '背景故事', '人物标签', '人物关系', '角色台词']},
         'academic': {k: '' for k in ['学历', '毕业院校', '院校地址', '领域偏向', '综合成绩', '毕业时间', '院校简介', '所学专业', '取得学位', '获得奖项', '学术论文', '个人专利', '学术地位']},
-        'inventory': {'size': [6, 6], 'items': []}, 'extensions': {}
+        'inventory': {'size': [6, 6], 'items': []}, 'extensions': {},
+        'talent_derivations': {'version':1,'definitions':[],'node_templates':[],'shared_rules':[],'skills':[]}
     }
 
 def number(value, name, low=-1000000, high=1000000):
@@ -49,10 +50,15 @@ def roll_race(card):
 def validate(card):
     if not isinstance(card, dict) or card.get('format') != 'noah-card' or type(card.get('version')) is not int or card['version'] != 2:
         raise CardError('不是受支持的人物卡，或文件版本过新')
+    from .skills.model import empty_bundle,validate_bundle
+    from .skills.expression import RuleError
+    card.setdefault('talent_derivations',empty_bundle())
+    try: validate_bundle(card['talent_derivations'])
+    except RuleError as exc: raise CardError('技能资源：'+str(exc)) from exc
     template = new_card()
     def walk(obj, expected, path='', depth=0):
         if depth > 24: raise CardError('文件嵌套过深')
-        if path in ('extensions', 'inventory.items', 'dice', 'inventory.size', 'portrait'): return
+        if path in ('extensions', 'inventory.items', 'dice', 'inventory.size', 'portrait', 'talent_derivations'): return
         if isinstance(expected, dict):
             if not isinstance(obj, dict) or set(obj) != set(expected): raise CardError(f'{path or "根节点"} 字段缺失或未知')
             for k, v in expected.items(): walk(obj[k], v, f'{path}.{k}'.lstrip('.'), depth+1)

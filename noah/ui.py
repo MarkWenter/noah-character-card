@@ -155,6 +155,17 @@ class App(tk.Tk):
         self.level_label=ttk.Label(b,style='Metric.TLabel'); self.level_label.grid(row=4,column=1,sticky='w',pady=10)
         for k in ['固有天赋','天赋衍生']:
             b=self.box(p,k); self.field(b,k,('crystal',k),0,wide=True)
+            if k=='天赋衍生':
+                list_frame=ttk.Frame(b); list_frame.grid(row=1,column=0,columnspan=4,sticky='ew',pady=12)
+                self.talent_tree=ttk.Treeview(list_frame,columns=['name','type','graph','description'],show='headings',height=4)
+                for key,label,width in [('name','技能名称',220),('type','类别',110),('graph','规则图',180),('description','简介',430)]:
+                    self.talent_tree.heading(key,text=label); self.talent_tree.column(key,width=width,minwidth=90)
+                list_bar=ttk.Scrollbar(list_frame,command=self.talent_tree.yview); self.talent_tree.configure(yscrollcommand=list_bar.set)
+                list_bar.pack(side='right',fill='y'); self.talent_tree.pack(side='left',fill='x',expand=True)
+                self.talent_tree.bind('<Double-1>',lambda e:self.edit_talents())
+                controls=ttk.Frame(b); controls.grid(row=2,column=0,columnspan=4,sticky='ew')
+                ttk.Button(controls,text='技能 / 定义词 / 规则流程',command=self.edit_talents).pack(side='left')
+                ttk.Label(controls,text='保留上方自然语言说明；新规则仅在独立模拟中执行。',style='Hint.TLabel').pack(side='left',padx=14)
         b=self.box(p,'晶灵展开')
         self.field(b,'启用展开',('form','enabled'),0); self.field(b,'描述',('form','描述'),1,wide=True); self.field(b,'天赋增幅',('form','天赋增幅'),2,wide=True)
         for i,k in enumerate(self.card['form']['增幅']): self.field(b,k+' 增幅',('form','增幅',k),3+i//2,i%2)
@@ -247,6 +258,11 @@ class App(tk.Tk):
         self.dice_label.configure(text=f"规则：{race['dice']}  |  记录："+'；'.join(k+':'+','.join(map(str,v)) for k,v in self.card['dice'].items() if v))
         self.level_label.configure(text=f"综合灵能等级  {values['level']:.2f} / 100   ·   {values['grade']} 级（暂定公式）")
         self.render_photo()
+        selected=self.talent_tree.selection(); self.talent_tree.delete(*self.talent_tree.get_children())
+        for skill in self.card['talent_derivations']['skills']:
+            self.talent_tree.insert('', 'end',iid=skill['id'],values=[skill['name'],skill['type'],'已配置' if skill['graph_id'] else '仅文本',skill['description'][:100].replace('\n',' ')])
+        for id in selected:
+            if self.talent_tree.exists(id): self.talent_tree.selection_add(id)
         self.draw_inventory(); self.weight_label.configure(text=f"总重量 {values['weight']:g} kg")
         self.status.configure(text='；'.join(values['warnings']) or '所有输入有效 · 已自动更新计算结果',foreground='#a33e27' if values['warnings'] else '#007477')
 
@@ -417,6 +433,16 @@ class App(tk.Tk):
         if path:
             try: save(path,candidate); self.status.configure(text='JSON已导出，可通过“打开”继续编辑：'+path)
             except CardError as exc: messagebox.showerror('导出失败',str(exc))
+
+    def edit_talents(self):
+        from .skills.ui import TalentManager
+        try: candidate=self.collect()
+        except CardError as exc: return messagebox.showerror('请先修正输入',str(exc))
+        selection=self.talent_tree.selection()
+        def apply(bundle):
+            self.card['talent_derivations']=bundle
+            self.changed(); self.render()
+        TalentManager(self,candidate,apply,selection[0] if selection else None)
 
     def upload_photo(self):
         path=filedialog.askopenfilename(title='选择证件照',filetypes=[('图片','*.png *.jpg *.jpeg *.webp *.bmp *.gif'),('所有文件','*.*')])
