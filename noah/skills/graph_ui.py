@@ -4,6 +4,7 @@ import json
 import tkinter as tk
 from tkinter import ttk,messagebox,filedialog
 from pathlib import Path
+from .chinese import dump as chinese_dump, parse as chinese_parse, label, internal
 from .catalog import templates
 from .document import GraphDocument
 from .model import validate_bundle,validate_graph,graph_diagnostics
@@ -14,6 +15,8 @@ COLORS={'Event':'#287f8b','Condition':'#9e6a2d','Data':'#3b6b9c','Math':'#6572b2
 
 def edit_value(text):
     text=text.strip()
+    if text.startswith(('记录：','列表：','文字：','数值：','选项：')) or text in {'是','否','空值'}: return chinese_parse(text)
+    text=internal(text)
     if len(text)>100000: raise RuleError('参数内容过长')
     if text.startswith('='): return {'expr':text[1:]}
     try: return loads_json(text)
@@ -22,7 +25,7 @@ def edit_value(text):
 
 def show_value(value):
     if isinstance(value,dict) and set(value)=={'expr'}: return '='+value['expr']
-    return value if isinstance(value,str) else json.dumps(value,ensure_ascii=False)
+    return label(value) if isinstance(value,str) else chinese_dump(value)
 
 class GraphEditor(tk.Toplevel):
     def __init__(self,parent,bundle,graph_id,on_save,card=None):
@@ -76,7 +79,7 @@ class GraphEditor(tk.Toplevel):
     def library(self):
         query=self.search.get().lower(); self.lib_ids=[]; self.lib.delete(0,'end')
         for id,t in self.doc.registry.items():
-            if query in (t['name']+' '+id+' '+t['kind']).lower(): self.lib_ids.append(id); self.lib.insert('end',t['kind']+' · '+t['name'])
+            if query in (t['name']+' '+id+' '+t['kind']).lower(): self.lib_ids.append(id); self.lib.insert('end',label(t['kind'])+' · '+t['name'])
     def world(self,x,y): return ((x-self.offset[0])/self.zoom,(y-self.offset[1])/self.zoom)
     def screen(self,x,y): return (x*self.zoom+self.offset[0],y*self.zoom+self.offset[1])
     def add_from_library(self,position=None):
@@ -105,7 +108,7 @@ class GraphEditor(tk.Toplevel):
                     identity=(n['id'],side,port); self.port_positions[identity]=(px,py)
                     radius=max(4,6*z); tag='port:'+json.dumps(identity,ensure_ascii=False)
                     c.create_oval(px-radius,py-radius,px+radius,py+radius,fill='#ffffff' if kind=='Flow' else '#57c2e6',outline='#172630',tags=('port',tag))
-                    c.create_text(px+(12*z if side=='input' else -12*z),py,text=port,anchor='w' if side=='input' else 'e',fill='#e3edf4',font=('Microsoft YaHei UI',max(6,int(8*z))),tags=tags)
+                    c.create_text(px+(12*z if side=='input' else -12*z),py,text=label(port),anchor='w' if side=='input' else 'e',fill='#e3edf4',font=('Microsoft YaHei UI',max(6,int(8*z))),tags=tags)
         for index,edge in enumerate(self.doc.graph['edges']):
             a=self.port_positions.get((edge['from'][0],'output',edge['from'][1])); b=self.port_positions.get((edge['to'][0],'input',edge['to'][1]))
             if a and b:
@@ -185,23 +188,27 @@ class GraphEditor(tk.Toplevel):
         self.form_node=id; self.form_vars={}; n=next(n for n in self.doc.graph['nodes'] if n['id']==id); t=self.doc.registry[n['template']]
         ttk.Label(self.properties,text=t['name'],style='Metric.TLabel',wraplength=270).pack(anchor='w',pady=8)
         ttk.Label(self.properties,text=id,style='Hint.TLabel',wraplength=270).pack(anchor='w')
-        ttk.Label(self.properties,text='数值可直接填写；表达式加 = 前缀。\n对象/布尔值使用JSON。',wraplength=270).pack(anchor='w',pady=8)
+        ttk.Label(self.properties,text='数值直接填写；是或否表示开关。\n复杂内容使用中文固定句式；= 后填写计算式。',wraplength=270).pack(anchor='w',pady=8)
         params={**copy.deepcopy(t['params']),**{k:('target' if v=='Entity' else False if v=='Boolean' else 0) for k,v in t['inputs'].items() if v!='Flow' and k not in t['params']},**n['params']}
         for key,value in params.items():
             connected=any(e['kind']=='data' and e['to']==[id,key] for e in self.doc.graph['edges'])
-            ttk.Label(self.properties,text=key+(' · 连线值优先' if connected else '')).pack(anchor='w',pady=(6,0)); var=tk.StringVar(value=show_value(value)); self.form_vars[key]=var
+            ttk.Label(self.properties,text=label(key)+(' · 连线值优先' if connected else '')).pack(anchor='w',pady=(6,0)); var=tk.StringVar(value=show_value(value)); self.form_vars[key]=var
             choices=[]
             if key in {'definition','tag'}: choices=[d['id'] for d in self.bundle['definitions']]+['力量','敏捷','耐受','魅力','智力','感知','意志','HP','MP','TP']
             elif key=='skill': choices=[s['id'] for s in self.bundle['skills']]
             elif key=='graph': choices=[g['id'] for g in self.bundle['shared_rules'] if g['id']!=self.doc.graph['id']]
             elif key=='op': choices=['>=','>','<=','<','==','!=']
             elif key=='target': choices=['target','source','self','A','B']
+            choices=[label(v) for v in choices]
+            if isinstance(value,(dict,list)) and not (isinstance(value,dict) and set(value)=={'expr'}):
+                from ..widgets import LongText
+                holder=LongText(self.properties,lambda:None,label(key)); holder.pack(fill='x'); holder.text.insert('1.0',show_value(value)); self.form_vars[key]=holder.text; continue
             widget=ttk.Combobox(self.properties,textvariable=var,values=choices,width=24) if choices else ttk.Entry(self.properties,textvariable=var,width=24)
             widget.pack(fill='x',pady=3)
     def apply_params(self):
         if self.form_node is None: return True
         try:
-            values={k:edit_value(v.get()) for k,v in self.form_vars.items()}; id=self.form_node
+            values={k:edit_value(v.get('1.0','end-1c') if isinstance(v,tk.Text) else v.get()) for k,v in self.form_vars.items()}; id=self.form_node
             self.doc.mutate(lambda g:next(n for n in g['nodes'] if n['id']==id).update(params=values)); self.draw(); return True
         except (RuleError,StopIteration) as exc: self.note('参数未应用：'+str(exc)); return False
     def delete(self): self.doc.delete(self.selected); self.selected=set(); self.form_node=None; self.draw()
@@ -267,12 +274,12 @@ class GraphEditor(tk.Toplevel):
         except (OSError,ValueError,TypeError) as exc: self.note('导入失败：'+str(exc))
     def interfaces(self):
         win=tk.Toplevel(self); win.title('子图数据接口'); win.geometry('540x420'); win.transient(self); win.grab_set()
-        ttk.Label(win,text='声明外部输入与输出：名称 → 端口类型。\n内部使用“子图输入/输出”节点，调用时通过args传值。',padding=12).pack()
-        editor=tk.Text(win,height=12); editor.pack(fill='both',expand=True,padx=12); editor.insert('1.0',json.dumps({k:self.doc.graph.get(k,{}) for k in ['inputs','outputs']},ensure_ascii=False,indent=2))
+        ttk.Label(win,text='声明外部输入与输出：名称 → 端口类型。\n内部使用“子图输入/输出”节点，调用时通过传入数据填写。\n使用“记录：”“设置 输入接口：”等固定句式。',padding=12).pack()
+        editor=tk.Text(win,height=12); editor.pack(fill='both',expand=True,padx=12); editor.insert('1.0',chinese_dump({k:self.doc.graph.get(k,{}) for k in ['inputs','outputs']}))
         def apply():
             try:
-                value=json.loads(editor.get('1.0','end-1c'))
-                if not isinstance(value,dict) or set(value)!={'inputs','outputs'}: raise RuleError('仅填写inputs与outputs')
+                value=chinese_parse(editor.get('1.0','end-1c'))
+                if not isinstance(value,dict) or set(value)!={'inputs','outputs'}: raise RuleError('仅填写输入接口与输出接口')
                 self.doc.mutate(lambda g:g.update(value)); win.destroy()
             except (ValueError,RuleError) as exc: messagebox.showerror('接口错误',str(exc),parent=win)
         ttk.Button(win,text='应用接口',command=apply).pack(pady=10)

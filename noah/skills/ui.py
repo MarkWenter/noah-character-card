@@ -6,6 +6,7 @@ from tkinter import ttk,messagebox,filedialog
 from pathlib import Path
 import uuid
 from ..widgets import LongText
+from .chinese import dump as chinese_dump, parse as chinese_parse, label as chinese_label, internal
 from .catalog import BUILTINS,DEFINITION_KINDS,EVENTS,templates
 from .model import empty_bundle,new_skill,new_graph,validate_bundle,validate_definition,validate_template,references,rename_resource,graph_diagnostics
 from .expression import RuleError
@@ -33,75 +34,83 @@ class ResourceEditor(Modal):
         self.build_form()
         self.ndsl_text=None
         if collection in {'definitions','node_templates'}:
-            nd=ttk.Frame(self.tabs,padding=12); self.tabs.add(nd,text='NDSL')
-            self.ndsl_text=LongText(nd,lambda:None,'NDSL声明'); self.ndsl_text.pack(fill='both',expand=True); self.ndsl_text.text.configure(height=23)
-            self.ndsl_text.text.insert('1.0',dump_definition(value) if collection=='definitions' else dump_template(value))
-            ttk.Button(nd,text='表单 → NDSL',command=self.form_to_ndsl).pack(anchor='w',pady=8)
+            nd=ttk.Frame(self.tabs,padding=12); self.tabs.add(nd,text='中文句式')
+            self.ndsl_text=LongText(nd,lambda:None,'中文固定句式'); self.ndsl_text.pack(fill='both',expand=True); self.ndsl_text.text.configure(height=23)
+            self.ndsl_text.text.insert('1.0',chinese_dump(value))
+            ttk.Button(nd,text='从表单生成句式',command=self.form_to_ndsl).pack(anchor='w',pady=8)
         footer=ttk.Frame(self,padding=12); footer.pack(fill='x')
         ttk.Label(footer,text='保存采用当前页内容；取消不修改资源。',style='Hint.TLabel').pack(side='left')
         ttk.Button(footer,text='保存',command=self.save).pack(side='right'); ttk.Button(footer,text='取消',command=self.destroy).pack(side='right',padx=8)
     def entry(self,key,label,value,choices=None,multiline=False):
         ttk.Label(self.form,text=label).pack(anchor='w',pady=(8,3))
+        if isinstance(value,(dict,list)):
+            multiline=True; value=chinese_dump(value)
         if multiline:
+
+            if key in {'references','categories','tags','fields','inputs','outputs','params'}:
+                ttk.Label(self.form,text='固定句式：记录： → 设置 名称： → 文字：内容 / 数值：数字 / 是 / 否；每层缩进四个空格。列表使用“添加：”。',wraplength=740,style='Hint.TLabel').pack(anchor='w')
             control=LongText(self.form,lambda:None,label); control.pack(fill='x'); control.text.insert('1.0',value); self.texts[key]=control.text
         else:
             var=tk.StringVar(value=show_value(value)); self.variables[key]=var
-            control=ttk.Combobox(self.form,textvariable=var,values=choices,state='readonly') if choices else ttk.Entry(self.form,textvariable=var)
+            control=ttk.Combobox(self.form,textvariable=var,values=[chinese_label(v) if isinstance(v,str) else v for v in choices],state='readonly') if choices else ttk.Entry(self.form,textvariable=var)
             control.pack(fill='x',pady=3)
         return control
     def build_form(self):
-        v=self.value; self.entry('id','ID（重命名会更新结构化引用）',v['id']); self.entry('name','名称',v['name'])
+        v=self.value; self.entry('id','内部标识（自动生成，通常无需修改）',v['id']); self.entry('name','名称',v['name'])
         if self.collection=='skills':
             self.entry('type','类别',v['type'],['active','passive','reaction','permanent'])
             self.entry('graph_id','关联规则图（可留空，稍后从技能列表编辑流程）',v['graph_id'],['']+[g['id'] for g in self.bundle['shared_rules']])
             for k,label in [('cost','消耗说明'),('cooldown','冷却说明')]: self.entry(k,label,v.get(k,''))
-            self.entry('enabled','启用技能',v['enabled'],['true','false']); self.entry('initially_available','模拟时初始可用',v.get('initially_available',True),['true','false'])
-            self.entry('references','引用定义词ID列表（JSON）',v.get('references',[]))
+            self.entry('enabled','启用技能',v['enabled'],['是','否']); self.entry('initially_available','模拟时初始可用',v.get('initially_available',True),['是','否'])
+            self.entry('references','引用的定义词（固定句式列表）',v.get('references',[]))
             self.entry('description','自然语言技能说明',v['description'],multiline=True)
         elif self.collection=='definitions':
             self.entry('kind','定义词类别',v['kind'],sorted(DEFINITION_KINDS)); self.entry('value_type','数据类型',v.get('value_type','integer'),['integer','number','boolean','string','object'])
-            self.entry('default','默认值（JSON：数值/true/false/带引号文本/对象）',v.get('default',0))
+            self.entry('default','默认内容（数值、是/否，或文字）',v.get('default',0))
             self.entry('min','最小值（可留空）',v.get('min','')); self.entry('max','最大值（可留空）',v.get('max',''))
-            self.entry('categories','分类（JSON文本列表）',v.get('categories',[])); self.entry('tags','标签（JSON文本列表）',v.get('tags',[]))
-            self.entry('stackable','可叠加',v.get('stackable',True),['true','false']); self.entry('dispellable','可驱散',v.get('dispellable',True),['true','false'])
-            self.entry('fields','结构化数据字段（JSON，type/default/min/max）',v.get('fields',{}))
+            self.entry('categories','分类（固定句式列表）',v.get('categories',[])); self.entry('tags','标签（固定句式列表）',v.get('tags',[]))
+            self.entry('stackable','可叠加',v.get('stackable',True),['是','否']); self.entry('dispellable','可驱散',v.get('dispellable',True),['是','否'])
+            self.entry('fields','附加数据（中文固定句式）',v.get('fields',{}))
             self.entry('description','描述',v.get('description',''),multiline=True)
         elif self.collection=='node_templates':
-            base=next(k for k,t in BUILTINS.items() if t['op']==v['op']); self.base=tk.StringVar(value=base)
+            base=next(k for k,t in BUILTINS.items() if t['op']==v['op']); self.base=tk.StringVar(value=BUILTINS[base]['name'])
             ttk.Label(self.form,text='基础模板（固定内置操作）').pack(anchor='w',pady=8)
-            box=ttk.Combobox(self.form,textvariable=self.base,values=list(BUILTINS),state='readonly'); box.pack(fill='x'); box.bind('<<ComboboxSelected>>',self.change_base)
-            self.entry('inputs','输入接口（JSON：端口名→类型）',v['inputs']); self.entry('outputs','输出接口（JSON：端口名→类型）',v['outputs'])
-            self.entry('params','默认参数（JSON；表达式使用 {"expr":"..."}）',v['params'],multiline=False)
+            box=ttk.Combobox(self.form,textvariable=self.base,values=[t['name'] for t in BUILTINS.values()],state='readonly'); box.pack(fill='x'); box.bind('<<ComboboxSelected>>',self.change_base)
+            self.entry('inputs','传入内容（固定句式）',v['inputs']); self.entry('outputs','传出内容（固定句式）',v['outputs'])
+            self.entry('params','默认设置（固定句式）',v['params'],multiline=False)
             self.entry('description','描述',v.get('description',''),multiline=True)
         else:
-            self.entry('kind','图类别',v['kind'],['skill','shared','scene']); self.entry('enabled','启用规则图',v['enabled'],['true','false'])
+            self.entry('kind','图类别',v['kind'],['skill','shared','scene']); self.entry('enabled','启用规则图',v['enabled'],['是','否'])
     def change_base(self,event=None):
-        t=BUILTINS[self.base.get()]
-        for key in ['inputs','outputs','params']: self.variables[key].set(show_value(t[key]))
+        t=next(t for t in BUILTINS.values() if t['name']==self.base.get())
+        for key in ['inputs','outputs','params']:
+            widget=self.texts[key]; widget.delete('1.0','end'); widget.insert('1.0',chinese_dump(t[key]))
     def read_form(self):
         v=copy.deepcopy(self.value)
         raw={k:var.get() for k,var in self.variables.items()}
         for key,value in raw.items():
-            if key in {'id','name','type','kind','value_type','graph_id','cost','cooldown'}: v[key]=value
+            if key in {'id','name','type','kind','value_type','graph_id','cost','cooldown'}: v[key]=internal(value) if key in {'type','kind','value_type'} else value
             elif key in {'min','max'} and value=='': v.pop(key,None)
             else: v[key]=edit_value(value)
-        for key,widget in self.texts.items(): v[key]=widget.get('1.0','end-1c')
-        if self.collection=='node_templates': v['op']=BUILTINS[self.base.get()]['op']; v['kind']=BUILTINS[self.base.get()]['kind']
+        for key,widget in self.texts.items():
+            text=widget.get('1.0','end-1c'); v[key]=chinese_parse(text) if key in {'references','categories','tags','fields','inputs','outputs','params'} else text
+        if self.collection=='node_templates': base=next(t for t in BUILTINS.values() if t['name']==self.base.get()); v['op']=base['op']; v['kind']=base['kind']
         if self.collection=='definitions': validate_definition(v)
         if self.collection=='node_templates': validate_template(v)
         return v
     def form_to_ndsl(self):
         try:
-            v=self.read_form(); text=dump_definition(v) if self.collection=='definitions' else dump_template(v)
+            v=self.read_form(); text=chinese_dump(v)
             self.ndsl_text.text.delete('1.0','end'); self.ndsl_text.text.insert('1.0',text)
         except RuleError as exc: messagebox.showerror('表单无效',str(exc),parent=self)
     def save(self):
         try:
             if self.ndsl_text and self.tabs.index('current')==1:
-                values=parse_ndsl(self.ndsl_text.text.get('1.0','end-1c'))
-                if sum(len(v) for v in values.values())!=1 or len(values[self.collection])!=1: raise RuleError('本窗口仅保存一项对应类型资源')
-                value=values[self.collection][0]
+                value=chinese_parse(self.ndsl_text.text.get('1.0','end-1c'))
             else: value=self.read_form()
+            if not isinstance(value,dict) or not isinstance(value.get('id'),str) or not isinstance(value.get('name'),str): raise RuleError('请保留标识和名称设置')
+            if self.collection=='definitions': validate_definition(value)
+            if self.collection=='node_templates': validate_template(value)
             self.on_save(value); self.destroy()
         except (RuleError,ValueError) as exc: messagebox.showerror('无法保存',str(exc),parent=self)
 
@@ -112,7 +121,7 @@ class TalentManager(Modal):
         toolbar=ttk.Frame(self,padding=10); toolbar.pack(fill='x')
         ttk.Button(toolbar,text='应用到人物卡',command=self.apply).pack(side='right')
         ttk.Button(toolbar,text='取消本次编辑',command=self.destroy).pack(side='right',padx=8)
-        for label,fn in [('载入完整示例',self.example),('导入资源JSON',self.import_bundle),('导出资源JSON',self.export_bundle),('批量NDSL声明',self.batch_ndsl)]: ttk.Button(toolbar,text=label,command=fn).pack(side='left',padx=3)
+        for label,fn in [('载入完整示例',self.example),('导入资源JSON',self.import_bundle),('导出资源JSON',self.export_bundle),('批量中文声明',self.batch_ndsl)]: ttk.Button(toolbar,text=label,command=fn).pack(side='left',padx=3)
         ttk.Label(self,text='所有编辑先保存在此窗口；点击“应用到人物卡”后参与主窗口的保存、备份与自动草稿。取消可放弃本次所有更改。',style='Hint.TLabel',padding=10).pack(fill='x')
         self.tabs=ttk.Notebook(self); self.tabs.pack(fill='both',expand=True,padx=12,pady=8)
         for collection in ['skills','definitions','node_templates','shared_rules']: self.resource_tab(collection)
@@ -132,7 +141,7 @@ class TalentManager(Modal):
         view=self.views[collection]; tree=view['tree']; selection=tree.selection(); tree.delete(*tree.get_children()); query=view['query'].get().lower()
         for v in self.bundle[collection]:
             if query not in json.dumps(v,ensure_ascii=False).lower(): continue
-            kind=v.get('type',v.get('kind','')); description=v.get('description','')
+            kind=chinese_label(v.get('type',v.get('kind',''))); description=v.get('description','')
             if collection=='skills':
                 graph=next((g for g in self.bundle['shared_rules'] if g['id']==v['graph_id']),None)
                 kind+=(' · 草稿待完善' if graph and graph_diagnostics(graph,templates(self.bundle)) else ' · 有规则图' if graph else ' · 纯文本')
@@ -142,7 +151,7 @@ class TalentManager(Modal):
     def refresh(self):
         for collection in self.views: self.refresh_collection(collection)
         if hasattr(self,'sim_skill'): self.sim_skill.configure(values=[s['id'] for s in self.bundle['skills']])
-        if hasattr(self,'event_box'): self.event_box.configure(values=EVENTS+[d['id'] for d in self.bundle['definitions'] if d['kind']=='Event'])
+        if hasattr(self,'event_box'): self.event_box.configure(values=[chinese_label(e) for e in EVENTS]+[d['id'] for d in self.bundle['definitions'] if d['kind']=='Event'])
     def selected(self,collection):
         choice=self.views[collection]['tree'].selection()
         return next((v for v in self.bundle[collection] if choice and v['id']==choice[0]),None)
@@ -211,13 +220,13 @@ class TalentManager(Modal):
             if messagebox.askyesno('导入资源','以文件中的资源替换当前编辑窗口的技能库？',parent=self): self.bundle=value; self.refresh(); self.reset_sim()
         except (OSError,ValueError,RecursionError) as exc: messagebox.showerror('导入失败',str(exc),parent=self)
     def batch_ndsl(self):
-        win=Modal(self); win.title('批量NDSL声明'); win.geometry('850x700'); win.transient(self); win.grab_set()
+        win=Modal(self); win.title('批量中文声明'); win.geometry('850x700'); win.transient(self); win.grab_set()
         editor=LongText(win,lambda:None,'NDSL'); editor.pack(fill='both',expand=True,padx=12,pady=12); editor.text.configure(height=22)
         from .examples import DEFINITIONS
-        editor.text.insert('1.0',DEFINITIONS)
+        editor.text.insert('1.0',chinese_dump(parse_ndsl(DEFINITIONS)))
         def apply():
             try:
-                values=parse_ndsl(editor.text.get('1.0','end-1c')); proposed=copy.deepcopy(self.bundle)
+                values=chinese_parse(editor.text.get('1.0','end-1c')); proposed=copy.deepcopy(self.bundle)
                 for key,items in values.items():
                     if {x['id'] for x in proposed[key]}&{x['id'] for x in items}: raise RuleError('ID已存在；请到对应资源编辑窗口修改')
                     proposed[key].extend(items)
@@ -229,8 +238,8 @@ class TalentManager(Modal):
         ttk.Label(page,text='独立模拟：A为自身、B为测试目标。读取人物卡属性快照；任何变化只作用于模拟副本。资源更改后会自动重置模拟。',style='Hint.TLabel',wraplength=1050).pack(anchor='w',pady=8)
         bar=ttk.Frame(page); bar.pack(fill='x'); self.skill_id=tk.StringVar(); self.sim_skill=ttk.Combobox(bar,textvariable=self.skill_id,width=30,state='readonly'); self.sim_skill.pack(side='left',padx=4)
         for text,fn in [('使用一次',lambda:self.simulate('skill')),('连续使用三次',lambda:self.simulate('skill',3)),('重置模拟',self.reset_sim),('编辑模拟实体',self.edit_runtime)]: ttk.Button(bar,text=text,command=fn).pack(side='left',padx=4)
-        events=ttk.Frame(page); events.pack(fill='x',pady=10); self.event_type=tk.StringVar(value='status_changed'); self.event_definition=tk.StringVar(); self.sim_target=tk.StringVar(value='B')
-        ttk.Label(events,text='事件').pack(side='left'); self.event_box=ttk.Combobox(events,textvariable=self.event_type,values=EVENTS,state='readonly',width=22); self.event_box.pack(side='left',padx=4)
+        events=ttk.Frame(page); events.pack(fill='x',pady=10); self.event_type=tk.StringVar(value=chinese_label('status_changed')); self.event_definition=tk.StringVar(); self.sim_target=tk.StringVar(value='B')
+        ttk.Label(events,text='事件').pack(side='left'); self.event_box=ttk.Combobox(events,textvariable=self.event_type,values=[chinese_label(e) for e in EVENTS],state='readonly',width=22); self.event_box.pack(side='left',padx=4)
         ttk.Label(events,text='定义词ID').pack(side='left'); ttk.Entry(events,textvariable=self.event_definition,width=24).pack(side='left',padx=4)
         ttk.Label(events,text='目标').pack(side='left'); ttk.Combobox(events,textvariable=self.sim_target,values=['A','B'],state='readonly',width=4).pack(side='left',padx=4)
         ttk.Button(events,text='发送事件',command=lambda:self.simulate('event')).pack(side='left',padx=4)
@@ -256,7 +265,7 @@ class TalentManager(Modal):
             for _ in range(count):
                 if mode=='skill': self.sim_engine.use_skill(self.skill_id.get(),target=self.sim_target.get())
                 elif mode=='remove': self.sim_engine.remove_status(self.sim_target.get(),self.event_definition.get())
-                else: self.sim_engine.emit(self.event_type.get(),'A',self.sim_target.get(),{'definition':self.event_definition.get()})
+                else: self.sim_engine.emit(internal(self.event_type.get()),'A',self.sim_target.get(),{'definition':self.event_definition.get()})
         except RuleError as exc: messagebox.showerror('模拟未完成',str(exc),parent=self)
         self.render_sim()
     def render_sim(self):
@@ -266,16 +275,16 @@ class TalentManager(Modal):
         statuses='、'.join(names.get(id,id)+'×'+str(count) for id,count in entity['statuses'].items()) or '无'
         available='、'.join(s['name'] for s in self.bundle['skills'] if entity['skills'].get(s['id'],False) and s['enabled']) or '无'
         self.sim_summary.configure(text=self.sim_target.get()+' · 状态：'+statuses+'；可用技能：'+available)
-        self.sim_state.configure(state='normal'); self.sim_state.delete('1.0','end'); self.sim_state.insert('1.0',json.dumps(runtime.entities,ensure_ascii=False,indent=2)); self.sim_state.configure(state='disabled')
+        self.sim_state.configure(state='normal'); self.sim_state.delete('1.0','end'); self.sim_state.insert('1.0',chinese_dump(runtime.entities)); self.sim_state.configure(state='disabled')
         self.sim_log.configure(state='normal'); self.sim_log.delete('1.0','end'); self.sim_log.insert('1.0','\n'.join(f"{v['event'] or '-'}  [{v['graph'] or '-'} / {v['node'] or '-'}] {v['message']}" for v in runtime.log)); self.sim_log.see('end'); self.sim_log.configure(state='disabled')
     def edit_runtime(self):
         if self.sim_engine is None: self.reset_sim()
         if not self.sim_engine: return
         win=Modal(self); win.title('仅编辑模拟实体'); win.geometry('850x700'); win.transient(self); win.grab_set()
-        text=LongText(win,lambda:None,'运行时副本'); text.pack(fill='both',expand=True,padx=12,pady=12); text.text.configure(height=23); text.text.insert('1.0',json.dumps(list(self.sim_engine.runtime.entities.values()),ensure_ascii=False,indent=2))
+        text=LongText(win,lambda:None,'运行时副本'); text.pack(fill='both',expand=True,padx=12,pady=12); text.text.configure(height=23); text.text.insert('1.0',chinese_dump(list(self.sim_engine.runtime.entities.values())))
         def apply():
             try:
-                entities=json.loads(text.text.get('1.0','end-1c')); runtime=Runtime(entities)
+                entities=chinese_parse(text.text.get('1.0','end-1c')); runtime=Runtime(entities)
                 if set(runtime.entities)!={'A','B'}: raise RuleError('本模拟界面保留A、B两个实体ID')
                 self.sim_engine=Engine(self.bundle,runtime); self.sim_bundle=copy.deepcopy(self.bundle); self.render_sim(); win.destroy()
             except (ValueError,TypeError,KeyError) as exc: messagebox.showerror('运行时数据无效',str(exc),parent=win)

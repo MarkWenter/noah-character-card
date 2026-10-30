@@ -90,6 +90,17 @@ def validate(card):
         elif obj is None or type(obj) is bool: pass
         else: number(obj,'扩展数值')
     extension_check(card['extensions'])
+    rich=card['extensions'].get('rich_text',{})
+    if not isinstance(rich,dict) or len(rich)>128: raise CardError('文本格式数据无效')
+    import re
+    for key,records in rich.items():
+        if not isinstance(key,str) or not isinstance(records,list) or len(records)>10000: raise CardError('文本格式记录无效')
+        for record in records:
+            if not isinstance(record,list) or len(record)!=3 or any(not isinstance(v,str) for v in record): raise CardError('文本格式记录无效')
+            tag,a,b=record
+            if tag not in ('rich_bold','rich_italic') and not re.fullmatch(r'rich_color_#[0-9a-fA-F]{6}',tag): raise CardError('文本颜色或格式无效')
+            if any(not re.fullmatch(r'[1-9][0-9]{0,5}\.[0-9]{1,6}',v) for v in (a,b)): raise CardError('文本格式位置无效')
+
     spec=dice_spec(card['race'])
     if not isinstance(card['dice'],dict) or set(card['dice']) != set(ATTRS): raise CardError('骰点结构错误')
     for k, rolls in card['dice'].items():

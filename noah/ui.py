@@ -90,6 +90,7 @@ class App(tk.Tk):
         if type(value) is bool: widget=ttk.Checkbutton(parent,text='启用 / 关闭',variable=var,command=self.changed,style='Toggle.TCheckbutton')
         elif wide:
             holder=LongText(parent,self.changed,label); widget=holder.text
+            holder.enable_rich(self.define_word if path in [('crystal','固有天赋'),('crystal','天赋衍生')] else None,self.save)
         elif choices:
             widget=ttk.Combobox(parent,textvariable=var,values=choices,state='readonly',width=26)
         else: widget=ttk.Entry(parent,textvariable=var,width=28)
@@ -104,10 +105,10 @@ class App(tk.Tk):
 
     def overview(self,p):
         b=self.box(p,'人物基本信息')
-        self.field(b,'亚种',('race',),0,choices=list(CATALOG['races']))
-        self.race_label=ttk.Label(b,wraplength=600); self.race_label.grid(row=0,column=2,columnspan=2,sticky='w')
-        for i,k in enumerate(self.card['basic']): self.field(b,k,('basic',k),i//2+1,i%2,choices=list(CATALOG['careers']) if k=='战斗职业' else None)
-        photo=ttk.LabelFrame(b,text='证件照 · 裁剪后内嵌JSON',padding=10); photo.grid(row=10,column=0,columnspan=4,sticky='ew',pady=12)
+        self.field(b,'亚种',('race',),1,choices=list(CATALOG['races']))
+        self.race_label=ttk.Label(b,wraplength=600); self.race_label.grid(row=1,column=2,columnspan=2,sticky='w')
+        for i,k in enumerate(self.card['basic']): self.field(b,k,('basic',k),i//2+2,i%2,choices=list(CATALOG['careers']) if k=='战斗职业' else ['守序善良','中立善良','混沌善良','守序中立','绝对中立','混沌中立','守序邪恶','中立邪恶','混乱邪恶'] if k=='阵营' else ['公民','九星联盟','政府','回归使徒'] if k=='立场' else None)
+        photo=ttk.LabelFrame(b,text='证件照',padding=14); photo.grid(row=0,column=0,columnspan=4,sticky='ew',pady=12)
         self.photo_label=ttk.Label(photo,text='尚未上传证件照'); self.photo_label.pack(side='left',padx=12)
         ttk.Button(photo,text='上传图片并裁剪',command=self.upload_photo).pack(side='left',padx=10)
         ttk.Button(photo,text='移除证件照',command=self.remove_photo).pack(side='left',padx=10)
@@ -117,7 +118,7 @@ class App(tk.Tk):
         for r,k in enumerate(['HP','MP','TP']):
             self.field(b,k+' 当前',('body',k),r)
             self.body_labels[k]=ttk.Label(b,style='Metric.TLabel'); self.body_labels[k].grid(row=r,column=2,sticky='w',padx=18)
-        self.field(b,'移动',('body','移动'),3); self.field(b,'护盾',('body','护盾'),3,1); self.field(b,'幸运',('body','幸运'),4)
+        self.field(b,'移动',('body','移动'),3); self.field(b,'护盾',('body','护盾'),4,0); self.field(b,'幸运',('body','幸运'),4,1)
         self.field(b,'常驻效果',('body','常驻效果'),5,wide=True)
         b=self.box(p,'属性总览 · 计算结果')
         self.summary_table=ttk.Treeview(b,columns=ATTRS+['幸运'],show='headings',height=1,selectmode='none')
@@ -218,10 +219,18 @@ class App(tk.Tk):
         if self.pending: self.after_cancel(self.pending)
         self.pending=self.after(180,self.refresh)
 
+    def define_word(self,name):
+        definitions=self.card['talent_derivations']['definitions']
+        if not any(d['name']==name for d in definitions):
+            definitions.append({'id':'custom.'+uuid.uuid4().hex,'name':name,'kind':'Custom','value_type':'string','default':'','description':''})
+        self.changed()
+
     def collect(self):
         candidate=copy.deepcopy(self.card)
         for path,(var,widget,kind) in self.fields.items():
-            if isinstance(widget,tk.Text): value=widget.get('1.0','end-1c')
+            if isinstance(widget,tk.Text):
+                value=widget.get('1.0','end-1c')
+                candidate['extensions'].setdefault('rich_text',{})['/'.join(path)]=LongText.formats(widget)
             elif kind is bool: value=var.get()
             elif kind in (int,float):
                 try: value=float(var.get())
@@ -241,7 +250,7 @@ class App(tk.Tk):
         self.loading=True
         for path,(var,widget,kind) in self.fields.items():
             value=get(self.card,path)
-            if isinstance(widget,tk.Text): widget.delete('1.0','end'); widget.insert('1.0',value); widget.edit_modified(False)
+            if isinstance(widget,tk.Text): widget.delete('1.0','end'); widget.insert('1.0',value); widget.edit_modified(False); LongText.restore_formats(widget,self.card['extensions'].get('rich_text',{}).get('/'.join(path),[]))
             else: var.set(value if kind is bool else (f'{value:g}' if kind in (int,float) else value))
         self.loading=False; self.render()
 
@@ -464,7 +473,7 @@ class App(tk.Tk):
         if image is None:
             self.photo_label.configure(image='',text='尚未上传证件照'); self._photo_image=None
         else:
-            image.thumbnail((100,140),Image.Resampling.LANCZOS)
+            image.thumbnail((280,392),Image.Resampling.LANCZOS)
             self._photo_image=ImageTk.PhotoImage(image,master=self)
             self.photo_label.configure(image=self._photo_image,text='')
 
